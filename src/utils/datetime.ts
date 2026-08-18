@@ -15,9 +15,9 @@ const MONTH_ABBR: Record<string, number> = {
 	dec: 11,
 };
 
-const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+export const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
-function pad(n: number, len = 2): string {
+export function pad(n: number, len = 2): string {
 	return String(n).padStart(len, "0");
 }
 
@@ -65,6 +65,17 @@ export function formatIST(d1UtcValue: string): IstFormatted {
 	};
 }
 
+export interface HourMinute {
+	hour: number;
+	minute: number;
+}
+
+export function parseTimeHHMM(timeStr: string): HourMinute | null {
+	const timeMatch = /^([01]?\d|2[0-3]):([0-5]\d)$/.exec(timeStr);
+	if (!timeMatch) return null;
+	return { hour: parseInt(timeMatch[1], 10), minute: parseInt(timeMatch[2], 10) };
+}
+
 /**
  * Parses a /remind date + time argument pair (wall-clock IST) into the UTC
  * D1 datetime string, or null if either argument is malformed / not a real
@@ -74,10 +85,9 @@ export function formatIST(d1UtcValue: string): IstFormatted {
  * Time format: "HH:MM" (24hr).
  */
 export function parseReminderDateTime(dateStr: string, timeStr: string, now: Date = new Date()): string | null {
-	const timeMatch = /^([01]?\d|2[0-3]):([0-5]\d)$/.exec(timeStr);
-	if (!timeMatch) return null;
-	const hour = parseInt(timeMatch[1], 10);
-	const minute = parseInt(timeMatch[2], 10);
+	const time = parseTimeHHMM(timeStr);
+	if (!time) return null;
+	const { hour, minute } = time;
 
 	let year: number;
 	let month: number; // 0-indexed

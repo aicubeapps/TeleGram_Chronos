@@ -23,6 +23,23 @@ export async function insertReminder(db: D1Database, chatId: string, message: st
 	return result.meta.last_row_id as number;
 }
 
+// `remind_on` is NOT NULL in the schema; for recurring reminders it's set to the same
+// value as `next_fire` (their initial scheduled fire) but plays no role in scheduling —
+// getRecurringDue() and getDueReminders() key off recurrence_rule/next_fire instead.
+export async function insertRecurring(
+	db: D1Database,
+	chatId: string,
+	message: string,
+	recurrenceRule: string,
+	nextFire: string,
+): Promise<number> {
+	const result = await db
+		.prepare(`INSERT INTO reminders (chat_id, message, remind_on, recurrence_rule, next_fire) VALUES (?, ?, ?, ?, ?)`)
+		.bind(chatId, message, nextFire, recurrenceRule, nextFire)
+		.run();
+	return result.meta.last_row_id as number;
+}
+
 export async function getReminder(db: D1Database, id: number): Promise<ReminderRow | null> {
 	const row = await db.prepare(`SELECT * FROM reminders WHERE id = ?`).bind(id).first<ReminderRow>();
 	return row ?? null;
@@ -32,15 +49,23 @@ export interface GroupedReminders {
 	overdue: ReminderRow[];
 	today: ReminderRow[];
 	upcoming: ReminderRow[];
+	recurring: ReminderRow[];
 }
 
 export async function listPending(db: D1Database, chatId: string): Promise<GroupedReminders> {
 	const { results } = await db
-		.prepare(`SELECT * FROM reminders WHERE chat_id = ? AND completed = 0 ORDER BY COALESCE(snoozed_until, remind_on) ASC`)
+		.prepare(
+			`SELECT * FROM reminders WHERE chat_id = ? AND completed = 0 AND recurrence_rule IS NULL ORDER BY COALESCE(snoozed_until, remind_on) ASC`,
+		)
 		.bind(chatId)
 		.all<ReminderRow>();
 
-	const grouped: GroupedReminders = { overdue: [], today: [], upcoming: [] };
+	const { results: recurringResults } = await db
+		.prepare(`SELECT * FROM reminders WHERE chat_id = ? AND completed = 0 AND recurrence_rule IS NOT NULL ORDER BY next_fire ASC`)
+		.bind(chatId)
+		.all<ReminderRow>();
+
+	const grouped: GroupedReminders = { overdue: [], today: [], upcoming: [], recurring: recurringResults ?? [] };
 	const nowMs = Date.now();
 	const today = istTodayYMD();
 
@@ -81,14 +106,31 @@ export async function markSent(db: D1Database, id: number): Promise<void> {
 	await db.prepare(`UPDATE reminders SET sent = 1 WHERE id = ?`).bind(id).run();
 }
 
+export async function updateNextFire(db: D1Database, id: number, nextFire: string): Promise<void> {
+	await db.prepare(`UPDATE reminders SET next_fire = ? WHERE id = ?`).bind(nextFire, id).run();
+}
+
 export async function getDueReminders(db: D1Database): Promise<ReminderRow[]> {
 	const { results } = await db
 		.prepare(
 			`SELECT * FROM reminders
 			 WHERE completed = 0
+			 AND recurrence_rule IS NULL
 			 AND remind_on <= datetime('now')
 			 AND (snoozed_until IS NULL OR snoozed_until <= datetime('now'))
 			 AND sent = 0`,
+		)
+		.all<ReminderRow>();
+	return results ?? [];
+}
+
+export async function getRecurringDue(db: D1Database): Promise<ReminderRow[]> {
+	const { results } = await db
+		.prepare(
+			`SELECT * FROM reminders
+			 WHERE recurrence_rule IS NOT NULL
+			 AND next_fire <= datetime('now')
+			 AND completed = 0`,
 		)
 		.all<ReminderRow>();
 	return results ?? [];
