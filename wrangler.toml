@@ -1,0 +1,15 @@
+name = "chronos-core-bot"
+main = "src/index.ts"
+compatibility_date = "2026-08-18"
+
+[observability]
+enabled = true
+
+[[d1_databases]]
+binding = "DB"
+database_name = "chronos-db"
+database_id = "0d071ac8-a0c9-4aa3-acac-9728505ad8ac"
+
+[[r2_buckets]]
+binding = "BUCKET"
+bucket_name = "chronos-vault"
