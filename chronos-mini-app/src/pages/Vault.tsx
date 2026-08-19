@@ -99,6 +99,10 @@ export function Vault() {
 
 	const pct = stats ? (stats.total_bytes / FREE_TIER) * 100 : 0;
 	const colorClass = pct < 70 ? "ok" : pct < 90 ? "warning" : "danger";
+	function typePct(bytes: number) {
+		if (!stats || stats.total_bytes === 0) return "0.00";
+		return ((bytes / FREE_TIER) * 100).toFixed(2);
+	}
 
 	return (
 		<>
@@ -109,7 +113,9 @@ export function Vault() {
 				<div className="card mb-md">
 					<div className="card-header">
 						<span className="card-title">STORAGE</span>
-						<span className="text-muted">{formatBytes(stats.total_bytes)} of 10 GB used</span>
+						<span className="text-muted">
+							{formatBytes(stats.total_bytes)} of 10 GB ({pct.toFixed(2)}% used)
+						</span>
 					</div>
 					<div className="progress-bar-wrap">
 						<div className="progress-bar-bg">
@@ -119,20 +125,20 @@ export function Vault() {
 					<div className="settings-row">
 						<span className="settings-label">📄 Documents</span>
 						<span className="settings-value">
-							{formatBytes(stats.by_type.document.bytes)} ({stats.by_type.document.count} files)
+							{formatBytes(stats.by_type.document.bytes)} ({stats.by_type.document.count} files / {typePct(stats.by_type.document.bytes)}%)
 						</span>
 					</div>
 					<div className="settings-row">
 						<span className="settings-label">🖼️ Photos</span>
 						<span className="settings-value">
-							{formatBytes(stats.by_type.photo.bytes)} ({stats.by_type.photo.count} files)
+							{formatBytes(stats.by_type.photo.bytes)} ({stats.by_type.photo.count} files / {typePct(stats.by_type.photo.bytes)}%)
 						</span>
 					</div>
 					{stats.by_type.unknown.count > 0 && (
 						<div className="settings-row">
 							<span className="settings-label">❓ Unknown</span>
 							<span className="settings-value">
-								{formatBytes(stats.by_type.unknown.bytes)} ({stats.by_type.unknown.count} files)
+								{formatBytes(stats.by_type.unknown.bytes)} ({stats.by_type.unknown.count} files / {typePct(stats.by_type.unknown.bytes)}%)
 							</span>
 						</div>
 					)}
