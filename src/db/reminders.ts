@@ -200,6 +200,27 @@ export async function insertListReminder(
 	return result.meta.last_row_id as number;
 }
 
+export async function searchReminders(db: D1Database, chatId: string, keywords: string[]): Promise<ReminderRow[]> {
+	const conditions = keywords.map(() => `message LIKE ?`).join(" AND ");
+	const binds = keywords.map((k) => `%${k}%`);
+	const { results } = await db
+		.prepare(
+			`SELECT * FROM reminders WHERE chat_id = ? AND completed = 0 AND ${conditions}
+			 ORDER BY COALESCE(snoozed_until, remind_on) ASC LIMIT 10`,
+		)
+		.bind(chatId, ...binds)
+		.all<ReminderRow>();
+	return results ?? [];
+}
+
+export async function getRemindersByLinkedItem(db: D1Database, chatId: string, linkedItemId: number): Promise<ReminderRow[]> {
+	const { results } = await db
+		.prepare(`SELECT * FROM reminders WHERE chat_id = ? AND linked_item_id = ? AND completed = 0`)
+		.bind(chatId, linkedItemId)
+		.all<ReminderRow>();
+	return results ?? [];
+}
+
 export async function getRecurringDue(db: D1Database): Promise<ReminderRow[]> {
 	const { results } = await db
 		.prepare(

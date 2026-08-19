@@ -88,6 +88,10 @@ export async function listActiveListsWithCounts(db: D1Database, chatId: string):
 	return results ?? [];
 }
 
+export async function reopenListItem(db: D1Database, itemId: number): Promise<void> {
+	await db.prepare(`UPDATE list_items SET completed = 0, completed_at = NULL WHERE id = ?`).bind(itemId).run();
+}
+
 export async function archiveListRow(db: D1Database, id: number): Promise<void> {
 	await db.prepare(`UPDATE lists SET archived_at = datetime('now') WHERE id = ?`).bind(id).run();
 }

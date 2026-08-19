@@ -27,6 +27,7 @@ CREATE TABLE documents (
   r2_key TEXT NOT NULL,
   label TEXT NOT NULL,
   file_type TEXT NOT NULL,
+  file_size INTEGER DEFAULT 0,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 

@@ -17,6 +17,7 @@ export default function App() {
 	const [page, setPage] = useState<PageId>("dashboard");
 	const [user, setUser] = useState<TelegramWebAppUser | undefined>(undefined);
 	const { theme, setTheme } = useTheme();
+	const [expandedListId, setExpandedListId] = useState<number | null>(null);
 
 	useEffect(() => {
 		const webApp = getWebApp();
@@ -25,14 +26,19 @@ export default function App() {
 		setUser(webApp?.initDataUnsafe?.user);
 	}, []);
 
+	function navigateToList(listId: number) {
+		setExpandedListId(listId);
+		setPage("lists");
+	}
+
 	function renderPage() {
 		switch (page) {
 			case "dashboard":
-				return <Dashboard onNavigate={setPage} />;
+				return <Dashboard onNavigate={setPage} onNavigateToList={navigateToList} />;
 			case "reminders":
 				return <Reminders />;
 			case "lists":
-				return <Lists />;
+				return <Lists expandedListId={expandedListId} />;
 			case "notes":
 				return <Notes />;
 			case "vault":

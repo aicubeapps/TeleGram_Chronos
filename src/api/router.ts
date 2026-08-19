@@ -2,12 +2,15 @@ import { authenticateRequest } from "./auth";
 import {
 	insertReminder,
 	insertRecurring,
+	insertListReminder,
 	listPending,
 	deleteReminder,
 	getReminder,
 	markSnoozed,
 	markComplete,
 	updateNextFire,
+	getRemindersByLinkedItem,
+	searchReminders,
 } from "../db/reminders";
 import { insertNote, listActiveNotes, deleteNoteRow } from "../db/notes";
 import {
@@ -18,9 +21,10 @@ import {
 	insertListItems,
 	getListItems,
 	markItemComplete,
+	reopenListItem,
 	listActiveListsWithCounts,
 } from "../db/lists";
-import { insertDocument, getDocument, listRecentDocuments } from "../db/documents";
+import { insertDocument, getDocument, listRecentDocuments, getVaultStats } from "../db/documents";
 import { deleteDocumentById } from "../commands/documents";
 import { insertBookmark, getBookmark, listRecentBookmarks, deleteBookmarkRow, searchBookmarks } from "../db/bookmarks";
 import { searchNotes } from "../db/notes";
@@ -94,11 +98,33 @@ export async function handleAPI(request: Request, env: Env): Promise<Response> {
 	try {
 		// /reminders
 		if (segments[0] === "reminders" && segments.length === 1 && method === "GET") {
+			const linkedItemId = url.searchParams.get("linked_item_id");
+			if (linkedItemId) {
+				const itemId = parseInt(linkedItemId, 10);
+				return json(await getRemindersByLinkedItem(env.DB, chatId, itemId));
+			}
 			return json(await listPending(env.DB, chatId));
 		}
 		if (segments[0] === "reminders" && segments.length === 1 && method === "POST") {
-			const body = (await request.json()) as { date: string; time: string; message: string; recurring?: boolean };
-			if (!body.date || !body.time || !body.message) return errorResponse("date, time, message required", 400);
+			const body = (await request.json()) as {
+				date?: string;
+				time?: string;
+				message: string;
+				recurring?: boolean;
+				remind_on?: string;
+				linked_list_id?: number;
+				linked_item_id?: number | null;
+			};
+			if (!body.message) return errorResponse("message required", 400);
+
+			// Item/list reminder format (remind_on as ISO string + linked ids)
+			if (body.remind_on && body.linked_list_id != null) {
+				const remindOn = toD1Utc(new Date(body.remind_on));
+				const id = await insertListReminder(env.DB, chatId, body.message, remindOn, body.linked_list_id, body.linked_item_id ?? null);
+				return json({ id }, 201);
+			}
+
+			if (!body.date || !body.time) return errorResponse("date, time, message required", 400);
 
 			if (body.recurring) {
 				const time = parseTimeHHMM(body.time);
@@ -151,9 +177,14 @@ export async function handleAPI(request: Request, env: Env): Promise<Response> {
 			return json(await listActiveNotes(env.DB, chatId));
 		}
 		if (segments[0] === "notes" && segments.length === 1 && method === "POST") {
-			const body = (await request.json()) as { text: string; ttlDays?: number | null };
+			const body = (await request.json()) as { text: string; ttlDays?: number | null; expires_at?: string | null };
 			if (!body.text) return errorResponse("text required", 400);
-			const expiresAt = body.ttlDays ? toD1Utc(new Date(Date.now() + body.ttlDays * 24 * 60 * 60 * 1000)) : null;
+			let expiresAt: string | null = null;
+			if (body.expires_at) {
+				expiresAt = toD1Utc(new Date(body.expires_at));
+			} else if (body.ttlDays) {
+				expiresAt = toD1Utc(new Date(Date.now() + body.ttlDays * 24 * 60 * 60 * 1000));
+			}
 			const id = await insertNote(env.DB, chatId, body.text, expiresAt);
 			return json({ id }, 201);
 		}
@@ -204,6 +235,36 @@ export async function handleAPI(request: Request, env: Env): Promise<Response> {
 			return json({ ok: true });
 		}
 
+		// /list-items/:id/reopen
+		if (segments[0] === "list-items" && segments.length === 3 && segments[2] === "reopen" && method === "PATCH") {
+			const itemId = parseInt(segments[1], 10);
+			const item = await getListItemById(env.DB, itemId);
+			if (!item) return errorResponse("Not found", 404);
+			const list = await getListById(env.DB, item.list_id);
+			if (!list || list.chat_id !== chatId) return errorResponse("Not found", 404);
+			await reopenListItem(env.DB, itemId);
+			return json({ ok: true });
+		}
+
+		// /vault/stats
+		if (segments[0] === "vault" && segments.length === 2 && segments[1] === "stats" && method === "GET") {
+			const rows = await getVaultStats(env.DB, chatId);
+			const FREE_TIER_BYTES = 10 * 1024 * 1024 * 1024;
+			let totalBytes = 0;
+			const byType: Record<string, { bytes: number; count: number }> = {
+				document: { bytes: 0, count: 0 },
+				photo: { bytes: 0, count: 0 },
+				unknown: { bytes: 0, count: 0 },
+			};
+			for (const row of rows) {
+				const key = row.file_type === "photo" ? "photo" : row.file_type === "document" ? "document" : "unknown";
+				byType[key].bytes += Number(row.total_bytes) || 0;
+				byType[key].count += Number(row.count) || 0;
+				totalBytes += Number(row.total_bytes) || 0;
+			}
+			return json({ total_bytes: totalBytes, free_tier_bytes: FREE_TIER_BYTES, by_type: byType });
+		}
+
 		// /documents
 		if (segments[0] === "documents" && segments.length === 1 && method === "GET") {
 			return json(await listRecentDocuments(env.DB, chatId));
@@ -220,9 +281,10 @@ export async function handleAPI(request: Request, env: Env): Promise<Response> {
 			const contentType = resolveContentType(fileType, file.type, file.name);
 			const safeName = file.name.replace(/\//g, "_");
 			const r2Key = `${chatId}/${Date.now()}_${safeName}`;
+			const fileSize = file.size ?? 0;
 
 			await env.BUCKET.put(r2Key, await file.arrayBuffer(), { httpMetadata: { contentType } });
-			const id = await insertDocument(env.DB, chatId, r2Key, label.trim(), fileType);
+			const id = await insertDocument(env.DB, chatId, r2Key, label.trim(), fileType, fileSize);
 			return json({ id, label: label.trim(), file_type: fileType }, 201);
 		}
 		if (segments[0] === "documents" && segments.length === 2 && method === "DELETE") {
@@ -241,6 +303,7 @@ export async function handleAPI(request: Request, env: Env): Promise<Response> {
 				headers: {
 					"Content-Type": object.httpMetadata?.contentType ?? "application/octet-stream",
 					"Content-Disposition": `attachment; filename="${doc.label.replace(/"/g, "")}"`,
+					"Cache-Control": "private, max-age=60",
 					...corsHeaders(),
 				},
 			});
@@ -272,14 +335,15 @@ export async function handleAPI(request: Request, env: Env): Promise<Response> {
 				.split(/\s+/)
 				.filter(Boolean)
 				.map((k) => k.toLowerCase());
-			if (keywords.length === 0) return json({ notes: [], documents: [], bookmarks: [] });
+			if (keywords.length === 0) return json({ reminders: [], notes: [], documents: [], bookmarks: [] });
 
-			const [notes, documents, bookmarks] = await Promise.all([
+			const [reminders, notes, documents, bookmarks] = await Promise.all([
+				searchReminders(env.DB, chatId, keywords),
 				searchNotes(env.DB, chatId, keywords),
 				searchDocuments(env.DB, chatId, keywords),
 				searchBookmarks(env.DB, chatId, keywords),
 			]);
-			return json({ notes, documents, bookmarks });
+			return json({ reminders, notes, documents, bookmarks });
 		}
 
 		// /summary
