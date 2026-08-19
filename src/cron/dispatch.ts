@@ -178,11 +178,20 @@ async function cleanupExpiredNotes(env: Env): Promise<number> {
 	}
 }
 
+async function cleanupExpiredShareTokens(env: Env): Promise<void> {
+	try {
+		await env.DB.prepare(`DELETE FROM share_tokens WHERE expires_at <= datetime('now')`).run();
+	} catch (err) {
+		console.error("Cron: cleanupExpiredShareTokens failed:", err);
+	}
+}
+
 export async function dispatchCron(env: Env): Promise<CronResult> {
 	const oneTime = await dispatchOneTime(env);
 	const recurring = await dispatchRecurring(env);
 	const listReminders = await dispatchListReminders(env);
 	const expiredNotesDeleted = await cleanupExpiredNotes(env);
+	await cleanupExpiredShareTokens(env);
 
 	return {
 		dispatched: oneTime.dispatched,

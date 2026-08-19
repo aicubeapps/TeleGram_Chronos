@@ -1,4 +1,5 @@
 import { authenticateRequest } from "./auth";
+import { handleCreateShare, handleRevokeShare, handleGetShare } from "./share";
 import {
 	insertReminder,
 	insertRecurring,
@@ -367,6 +368,17 @@ export async function handleAPI(request: Request, env: Env): Promise<Response> {
 			const bookmark = await getBookmark(env.DB, id);
 			if (!bookmark || bookmark.chat_id !== chatId) return errorResponse("Not found", 404);
 			return json(bookmark);
+		}
+
+		// /share
+		if (segments[0] === "share" && segments.length === 1 && method === "POST") {
+			return handleCreateShare(request, env);
+		}
+		if (segments[0] === "share" && segments.length === 2 && method === "GET") {
+			return handleGetShare(env, segments[1]);
+		}
+		if (segments[0] === "share" && segments.length === 2 && method === "DELETE") {
+			return handleRevokeShare(request, env, segments[1]);
 		}
 
 		return errorResponse("Not found", 404);
