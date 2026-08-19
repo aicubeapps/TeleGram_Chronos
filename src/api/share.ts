@@ -1,6 +1,7 @@
 import { authenticateRequest } from "./auth";
 
 const PAGES_BASE = "https://chronos-mini-app.pages.dev";
+const CORS_ORIGIN = "https://chronos-mini-app.pages.dev";
 const IST_OFFSET_MS = 330 * 60 * 1000;
 
 function formatISTDisplay(utcStr: string): string {
@@ -10,6 +11,20 @@ function formatISTDisplay(utcStr: string): string {
 	return `${ist.getUTCDate()} ${months[ist.getUTCMonth()]} ${String(ist.getUTCHours()).padStart(2, "0")}:${String(ist.getUTCMinutes()).padStart(2, "0")} IST`;
 }
 
+// API responses include CORS headers (called from the authenticated API router)
+function apiJson(data: unknown, status = 200): Response {
+	return new Response(JSON.stringify(data), {
+		status,
+		headers: {
+			"Content-Type": "application/json",
+			"Access-Control-Allow-Origin": CORS_ORIGIN,
+			"Access-Control-Allow-Methods": "GET, POST, PATCH, DELETE, OPTIONS",
+			"Access-Control-Allow-Headers": "Authorization, Content-Type",
+		},
+	});
+}
+
+// Public page/download responses — no CORS needed
 function json(data: unknown, status = 200): Response {
 	return new Response(JSON.stringify(data), {
 		status,
@@ -19,6 +34,10 @@ function json(data: unknown, status = 200): Response {
 
 function html(body: string, status = 200): Response {
 	return new Response(body, { status, headers: { "Content-Type": "text/html; charset=utf-8" } });
+}
+
+function apiError(msg: string, status: number): Response {
+	return apiJson({ error: msg }, status);
 }
 
 function errorJson(msg: string, status: number): Response {
@@ -34,17 +53,63 @@ interface ShareTokenRow {
 	expires_at: string;
 }
 
+interface ShareListRow {
+	token: string;
+	object_type: string;
+	object_id: number;
+	expires_at: string;
+	label: string;
+}
+
+// ── GET /api/share ─────────────────────────────────────────────────────────
+export async function handleListShares(request: Request, env: Env): Promise<Response> {
+	const auth = await authenticateRequest(request, env);
+	if (!auth) return apiError("Unauthorized", 401);
+	const { chatId } = auth;
+
+	const rows = await env.DB.prepare(`
+		SELECT
+			st.token,
+			st.object_type,
+			st.object_id,
+			st.expires_at,
+			CASE st.object_type
+				WHEN 'note' THEN SUBSTR(n.text, 1, 80)
+				WHEN 'list' THEN l.name
+				WHEN 'document' THEN d.label
+				WHEN 'bookmark' THEN b.label
+				ELSE 'Unknown'
+			END as label
+		FROM share_tokens st
+		LEFT JOIN notes n ON st.object_type = 'note' AND n.id = st.object_id
+		LEFT JOIN lists l ON st.object_type = 'list' AND l.id = st.object_id
+		LEFT JOIN documents d ON st.object_type = 'document' AND d.id = st.object_id
+		LEFT JOIN bookmarks b ON st.object_type = 'bookmark' AND b.id = st.object_id
+		WHERE st.chat_id = ? AND st.expires_at > datetime('now')
+		ORDER BY st.expires_at ASC
+	`).bind(chatId).all<ShareListRow>();
+
+	return apiJson(rows.results.map((r) => ({
+		token: r.token,
+		object_type: r.object_type,
+		object_id: r.object_id,
+		expires_at: r.expires_at,
+		label: r.label ?? `${r.object_type} #${r.object_id}`,
+		url: `${PAGES_BASE}/share/${r.token}`,
+	})));
+}
+
 // ── POST /api/share ────────────────────────────────────────────────────────
 export async function handleCreateShare(request: Request, env: Env): Promise<Response> {
 	const auth = await authenticateRequest(request, env);
-	if (!auth) return errorJson("Unauthorized", 401);
+	if (!auth) return apiError("Unauthorized", 401);
 	const { chatId } = auth;
 
 	const body = await request.json<{ object_type: string; object_id: number; expires_in_days?: number }>();
 	const { object_type, object_id, expires_in_days = 7 } = body;
 
 	if (!["note", "list", "document", "bookmark"].includes(object_type)) {
-		return errorJson("Invalid object_type", 400);
+		return apiError("Invalid object_type", 400);
 	}
 
 	// Verify ownership
@@ -57,14 +122,14 @@ export async function handleCreateShare(request: Request, env: Env): Promise<Res
 	const owned = await env.DB.prepare(
 		`SELECT id FROM ${tableMap[object_type]} WHERE id = ? AND chat_id = ?`
 	).bind(object_id, chatId).first();
-	if (!owned) return errorJson("Not found or access denied", 403);
+	if (!owned) return apiError("Not found or access denied", 403);
 
 	// Return existing non-expired token if present
 	const existing = await env.DB.prepare(
 		`SELECT token, expires_at FROM share_tokens WHERE object_type = ? AND object_id = ? AND chat_id = ? AND expires_at > datetime('now')`
 	).bind(object_type, object_id, chatId).first<{ token: string; expires_at: string }>();
 	if (existing) {
-		return json({
+		return apiJson({
 			token: existing.token,
 			url: `${PAGES_BASE}/share/${existing.token}`,
 			expires_at: existing.expires_at,
@@ -78,29 +143,29 @@ export async function handleCreateShare(request: Request, env: Env): Promise<Res
 		`INSERT INTO share_tokens (token, object_type, object_id, chat_id, expires_at) VALUES (?, ?, ?, ?, ?)`
 	).bind(token, object_type, object_id, chatId, expiresAt).run();
 
-	return json({ token, url: `${PAGES_BASE}/share/${token}`, expires_at: expiresAt }, 201);
+	return apiJson({ token, url: `${PAGES_BASE}/share/${token}`, expires_at: expiresAt }, 201);
 }
 
 // ── DELETE /api/share/:token ───────────────────────────────────────────────
 export async function handleRevokeShare(request: Request, env: Env, token: string): Promise<Response> {
 	const auth = await authenticateRequest(request, env);
-	if (!auth) return errorJson("Unauthorized", 401);
+	if (!auth) return apiError("Unauthorized", 401);
 	const { chatId } = auth;
 
 	const row = await env.DB.prepare(
 		`SELECT id FROM share_tokens WHERE token = ? AND chat_id = ?`
 	).bind(token, chatId).first();
-	if (!row) return errorJson("Not found", 404);
+	if (!row) return apiError("Not found", 404);
 
 	await env.DB.prepare(`DELETE FROM share_tokens WHERE token = ?`).bind(token).run();
-	return json({ success: true });
+	return apiJson({ success: true });
 }
 
 // ── GET /api/share/:token ──────────────────────────────────────────────────
 export async function handleGetShare(env: Env, token: string): Promise<Response> {
 	const row = await env.DB.prepare(
 		`SELECT * FROM share_tokens WHERE token = ? AND expires_at > datetime('now')`
-	).first<ShareTokenRow>();
+	).bind(token).first<ShareTokenRow>();
 	if (!row) return errorJson("Expired or invalid", 410);
 
 	let data: unknown;
@@ -108,7 +173,7 @@ export async function handleGetShare(env: Env, token: string): Promise<Response>
 	if (row.object_type === "note") {
 		const note = await env.DB.prepare(
 			`SELECT id, text, expires_at, created_at FROM notes WHERE id = ?`
-		).first<{ id: number; text: string; expires_at: string | null; created_at: string }>();
+		).bind(row.object_id).first<{ id: number; text: string; expires_at: string | null; created_at: string }>();
 		if (!note) return errorJson("Not found", 404);
 		if (note.expires_at && new Date(note.expires_at + "Z") < new Date()) return errorJson("Note has self-destructed", 410);
 		data = note;
@@ -116,24 +181,24 @@ export async function handleGetShare(env: Env, token: string): Promise<Response>
 	} else if (row.object_type === "list") {
 		const list = await env.DB.prepare(
 			`SELECT id, name FROM lists WHERE id = ? AND archived_at IS NULL`
-		).first<{ id: number; name: string }>();
+		).bind(row.object_id).first<{ id: number; name: string }>();
 		if (!list) return errorJson("Not found", 404);
 		const items = await env.DB.prepare(
 			`SELECT id, item, completed FROM list_items WHERE list_id = ? ORDER BY id ASC`
-		).all<{ id: number; item: string; completed: number }>();
+		).bind(row.object_id).all<{ id: number; item: string; completed: number }>();
 		data = { ...list, items: items.results };
 
 	} else if (row.object_type === "document") {
 		const doc = await env.DB.prepare(
 			`SELECT id, label, file_type FROM documents WHERE id = ?`
-		).first<{ id: number; label: string; file_type: string }>();
+		).bind(row.object_id).first<{ id: number; label: string; file_type: string }>();
 		if (!doc) return errorJson("Not found", 404);
 		data = { ...doc, download_url: `/share/${token}/download` };
 
 	} else if (row.object_type === "bookmark") {
 		const bm = await env.DB.prepare(
 			`SELECT id, url, label FROM bookmarks WHERE id = ?`
-		).first<{ id: number; url: string; label: string }>();
+		).bind(row.object_id).first<{ id: number; url: string; label: string }>();
 		if (!bm) return errorJson("Not found", 404);
 		data = bm;
 	}
@@ -145,12 +210,12 @@ export async function handleGetShare(env: Env, token: string): Promise<Response>
 export async function handleShareDownload(env: Env, token: string): Promise<Response> {
 	const row = await env.DB.prepare(
 		`SELECT object_type, object_id FROM share_tokens WHERE token = ? AND expires_at > datetime('now')`
-	).first<{ object_type: string; object_id: number }>();
+	).bind(token).first<{ object_type: string; object_id: number }>();
 	if (!row || row.object_type !== "document") return new Response("Not found", { status: 404 });
 
 	const doc = await env.DB.prepare(
 		`SELECT r2_key, label FROM documents WHERE id = ?`
-	).first<{ r2_key: string; label: string }>();
+	).bind(row.object_id).first<{ r2_key: string; label: string }>();
 	if (!doc) return new Response("Not found", { status: 404 });
 
 	const object = await env.BUCKET.get(doc.r2_key);
@@ -177,7 +242,7 @@ export async function handleSharePage(request: Request, env: Env): Promise<Respo
 
 	const row = await env.DB.prepare(
 		`SELECT * FROM share_tokens WHERE token = ? AND expires_at > datetime('now')`
-	).first<ShareTokenRow>();
+	).bind(token).first<ShareTokenRow>();
 	if (!row) return html(expiredPage(), 410);
 
 	let pageHtml: string;
@@ -185,27 +250,27 @@ export async function handleSharePage(request: Request, env: Env): Promise<Respo
 	if (row.object_type === "note") {
 		const note = await env.DB.prepare(
 			`SELECT text, expires_at FROM notes WHERE id = ?`
-		).first<{ text: string; expires_at: string | null }>();
+		).bind(row.object_id).first<{ text: string; expires_at: string | null }>();
 		if (!note || (note.expires_at && new Date(note.expires_at + "Z") < new Date())) return html(expiredPage(), 410);
 		pageHtml = renderNote(note.text, row.expires_at, token);
 
 	} else if (row.object_type === "list") {
-		const list = await env.DB.prepare(`SELECT name FROM lists WHERE id = ?`).first<{ name: string }>();
+		const list = await env.DB.prepare(`SELECT name FROM lists WHERE id = ?`).bind(row.object_id).first<{ name: string }>();
 		const items = await env.DB.prepare(
 			`SELECT item, completed FROM list_items WHERE list_id = ? ORDER BY id ASC`
-		).all<{ item: string; completed: number }>();
+		).bind(row.object_id).all<{ item: string; completed: number }>();
 		if (!list) return html(expiredPage(), 410);
 		pageHtml = renderList(list.name, items.results, row.expires_at, token);
 
 	} else if (row.object_type === "document") {
 		const doc = await env.DB.prepare(`SELECT label, file_type FROM documents WHERE id = ?`)
-			.first<{ label: string; file_type: string }>();
+			.bind(row.object_id).first<{ label: string; file_type: string }>();
 		if (!doc) return html(expiredPage(), 410);
 		pageHtml = renderDocument(doc.label, doc.file_type, token, row.expires_at);
 
 	} else if (row.object_type === "bookmark") {
 		const bm = await env.DB.prepare(`SELECT url, label FROM bookmarks WHERE id = ?`)
-			.first<{ url: string; label: string }>();
+			.bind(row.object_id).first<{ url: string; label: string }>();
 		if (!bm) return html(expiredPage(), 410);
 		pageHtml = renderBookmark(bm.url, bm.label, row.expires_at, token);
 
@@ -278,7 +343,7 @@ function esc(s: string): string {
 	return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
-function renderNote(text: string, expiresAt: string, token: string): string {
+function renderNote(text: string, expiresAt: string, _token: string): string {
 	return pageShell("Note", `
   <div class="card">
     <div class="label">📝 Note</div>
@@ -286,7 +351,7 @@ function renderNote(text: string, expiresAt: string, token: string): string {
   </div>`, expiresAt);
 }
 
-function renderList(name: string, items: { item: string; completed: number }[], expiresAt: string, token: string): string {
+function renderList(name: string, items: { item: string; completed: number }[], expiresAt: string, _token: string): string {
 	const rows = items.map(i =>
 		`<div class="check-row"><span>${i.completed ? "☑" : "☐"}</span><span class="${i.completed ? "done" : ""}">${esc(i.item)}</span></div>`
 	).join("");
@@ -307,7 +372,7 @@ function renderDocument(label: string, fileType: string, token: string, expiresA
   </div>`, expiresAt);
 }
 
-function renderBookmark(url: string, label: string, expiresAt: string, token: string): string {
+function renderBookmark(url: string, label: string, expiresAt: string, _token: string): string {
 	return pageShell("Bookmark", `
   <div class="card">
     <div class="label">🔖 Bookmark</div>

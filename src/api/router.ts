@@ -1,5 +1,5 @@
 import { authenticateRequest } from "./auth";
-import { handleCreateShare, handleRevokeShare, handleGetShare } from "./share";
+import { handleListShares, handleCreateShare, handleRevokeShare, handleGetShare } from "./share";
 import {
 	insertReminder,
 	insertRecurring,
@@ -371,6 +371,9 @@ export async function handleAPI(request: Request, env: Env): Promise<Response> {
 		}
 
 		// /share
+		if (segments[0] === "share" && segments.length === 1 && method === "GET") {
+			return handleListShares(request, env);
+		}
 		if (segments[0] === "share" && segments.length === 1 && method === "POST") {
 			return handleCreateShare(request, env);
 		}

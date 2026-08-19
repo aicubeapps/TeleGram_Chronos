@@ -3,6 +3,7 @@ import { api, API_BASE } from "../api";
 import { DocumentRow, VaultStats } from "../types";
 import { Modal } from "../components/Modal";
 import { ShareModal } from "../components/ShareModal";
+import { SharedObjects } from "../components/SharedObjects";
 import { getWebApp } from "../telegram";
 
 function badgeClass(fileType: string): string {
@@ -28,6 +29,7 @@ export function Vault() {
 	const [retrieving, setRetrieving] = useState<number | null>(null);
 	const [retrieveError, setRetrieveError] = useState<number | null>(null);
 	const [shareDoc, setShareDoc] = useState<DocumentRow | null>(null);
+	const [shareRefreshTick, setShareRefreshTick] = useState(0);
 	const fileInputRef = useRef<HTMLInputElement>(null);
 
 	function load() {
@@ -109,6 +111,8 @@ export function Vault() {
 	return (
 		<>
 			<div className="page-title">Vault</div>
+
+			<SharedObjects refreshTick={shareRefreshTick} />
 
 			{/* BUG-07: storage usage widget */}
 			{stats && (
@@ -195,7 +199,7 @@ export function Vault() {
 			)}
 
 			{shareDoc && (
-				<ShareModal objectType="document" objectId={shareDoc.id} onClose={() => setShareDoc(null)} />
+				<ShareModal objectType="document" objectId={shareDoc.id} onClose={() => { setShareDoc(null); setShareRefreshTick((t) => t + 1); }} />
 			)}
 
 			{deleteTarget && (
