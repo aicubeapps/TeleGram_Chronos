@@ -10,6 +10,7 @@ import { Notes } from "./pages/Notes";
 import { Vault } from "./pages/Vault";
 import { Bookmarks } from "./pages/Bookmarks";
 import { Search } from "./pages/Search";
+import { Shares } from "./pages/Shares";
 import { Settings } from "./pages/Settings";
 
 export default function App() {
@@ -45,6 +46,8 @@ export default function App() {
 				return <Vault />;
 			case "bookmarks":
 				return <Bookmarks />;
+			case "shares":
+				return <Shares />;
 			case "search":
 				return <Search />;
 			case "settings":

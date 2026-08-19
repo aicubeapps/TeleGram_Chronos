@@ -9,7 +9,7 @@ interface Props {
 	onClose: () => void;
 }
 
-const PAGES_BASE = "https://chronos-mini-app.pages.dev";
+const PAGES_BASE = "https://chronos-core-bot.aicube-apps.workers.dev";
 
 const IST_OFFSET_MS = 330 * 60 * 1000;
 
