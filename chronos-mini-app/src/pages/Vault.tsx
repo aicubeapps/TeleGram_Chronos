@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { api, API_BASE } from "../api";
 import { DocumentRow, VaultStats } from "../types";
 import { Modal } from "../components/Modal";
+import { ShareModal } from "../components/ShareModal";
+import { SharedObjects } from "../components/SharedObjects";
 import { getWebApp } from "../telegram";
 
 function badgeClass(fileType: string): string {
@@ -26,6 +28,8 @@ export function Vault() {
 	const [deleteTarget, setDeleteTarget] = useState<DocumentRow | null>(null);
 	const [retrieving, setRetrieving] = useState<number | null>(null);
 	const [retrieveError, setRetrieveError] = useState<number | null>(null);
+	const [shareDoc, setShareDoc] = useState<DocumentRow | null>(null);
+	const [shareRefreshTick, setShareRefreshTick] = useState(0);
 	const fileInputRef = useRef<HTMLInputElement>(null);
 
 	function load() {
@@ -108,6 +112,8 @@ export function Vault() {
 		<>
 			<div className="page-title">Vault</div>
 
+			<SharedObjects refreshTick={shareRefreshTick} />
+
 			{/* BUG-07: storage usage widget */}
 			{stats && (
 				<div className="card mb-md">
@@ -181,12 +187,19 @@ export function Vault() {
 							<button className="btn btn-sm btn-outline" onClick={() => handleRetrieve(d)} disabled={retrieving === d.id}>
 								{retrieving === d.id ? <span className="spinner" /> : "⬇️ Retrieve"}
 							</button>
+							<button className="btn btn-sm btn-outline" onClick={() => setShareDoc(d)}>
+								📤
+							</button>
 							<button className="btn btn-sm btn-danger" onClick={() => setDeleteTarget(d)}>
 								Delete
 							</button>
 						</div>
 					</div>
 				))
+			)}
+
+			{shareDoc && (
+				<ShareModal objectType="document" objectId={shareDoc.id} onClose={() => { setShareDoc(null); setShareRefreshTick((t) => t + 1); }} />
 			)}
 
 			{deleteTarget && (

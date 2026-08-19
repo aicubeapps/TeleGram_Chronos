@@ -9,6 +9,7 @@ import { HELP_TEXT } from "./commands/help";
 import { handleCallbackQuery } from "./commands/callbacks";
 import { dispatchCron } from "./cron/dispatch";
 import { handleAPI } from "./api/router";
+import { handleSharePage } from "./api/share";
 import { sendMessage } from "./telegram";
 import { TelegramUpdate } from "./types";
 
@@ -18,6 +19,10 @@ export default {
 
 		if (url.pathname.startsWith("/api/")) {
 			return handleAPI(request, env);
+		}
+
+		if (url.pathname.startsWith("/share/")) {
+			return handleSharePage(request, env);
 		}
 
 		if (request.method === "POST" && url.pathname === "/webhook") {

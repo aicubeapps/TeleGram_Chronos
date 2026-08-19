@@ -2,12 +2,14 @@ import { useEffect, useState } from "react";
 import { api } from "../api";
 import { BookmarkRow } from "../types";
 import { Modal } from "../components/Modal";
+import { ShareModal } from "../components/ShareModal";
 
 export function Bookmarks() {
 	const [bookmarks, setBookmarks] = useState<BookmarkRow[] | null>(null);
 	const [showAdd, setShowAdd] = useState(false);
 	const [url, setUrl] = useState("");
 	const [label, setLabel] = useState("");
+	const [shareBookmark, setShareBookmark] = useState<BookmarkRow | null>(null);
 
 	function load() {
 		api.get<BookmarkRow[]>("/bookmarks").then(setBookmarks);
@@ -55,6 +57,11 @@ export function Bookmarks() {
 										</a>
 									</td>
 									<td>
+										<button className="icon-btn" onClick={() => setShareBookmark(b)} title="Share">
+											📤
+										</button>
+									</td>
+									<td>
 										<button className="icon-btn" onClick={() => handleDelete(b.id)}>
 											✕
 										</button>
@@ -64,6 +71,10 @@ export function Bookmarks() {
 						</tbody>
 					</table>
 				</div>
+			)}
+
+			{shareBookmark && (
+				<ShareModal objectType="bookmark" objectId={shareBookmark.id} onClose={() => setShareBookmark(null)} />
 			)}
 
 			{showAdd && (

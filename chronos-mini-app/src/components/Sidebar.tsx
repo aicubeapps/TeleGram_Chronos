@@ -1,4 +1,4 @@
-export type PageId = "dashboard" | "reminders" | "lists" | "notes" | "vault" | "bookmarks" | "search" | "settings";
+export type PageId = "dashboard" | "reminders" | "lists" | "notes" | "vault" | "bookmarks" | "shares" | "search" | "settings";
 
 interface NavItem {
 	id: string;
@@ -14,6 +14,7 @@ const NAV_ITEMS: NavItem[] = [
 	{ id: "nav-notes", icon: "📝", label: "NOTES", page: "notes" },
 	{ id: "nav-vault", icon: "📎", label: "VAULT", page: "vault" },
 	{ id: "nav-bookmarks", icon: "🔖", label: "BOOKMARKS", page: "bookmarks" },
+	{ id: "nav-shares", icon: "📤", label: "SHARED", page: "shares" },
 	{ id: "nav-search", icon: "🔍", label: "SEARCH", page: "search" },
 ];
 

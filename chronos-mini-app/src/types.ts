@@ -85,6 +85,12 @@ export interface SearchResults {
 	bookmarks: BookmarkRow[];
 }
 
+export interface ShareData {
+	token: string;
+	url: string;
+	expires_at: string;
+}
+
 export interface VaultTypeStats {
 	bytes: number;
 	count: number;

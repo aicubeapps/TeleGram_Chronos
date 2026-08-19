@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { api } from "../api";
 import { NoteRow } from "../types";
 import { Modal } from "../components/Modal";
+import { ShareModal } from "../components/ShareModal";
 
 function daysRemaining(expiresAt: string): number {
 	const d = new Date(`${expiresAt.replace(" ", "T")}Z`);
@@ -33,6 +34,7 @@ export function Notes() {
 	const [saving, setSaving] = useState(false);
 	const [showBanner, setShowBanner] = useState(false);
 	const [showError, setShowError] = useState(false);
+	const [shareNote, setShareNote] = useState<NoteRow | null>(null);
 
 	function load() {
 		api.get<NoteRow[]>("/notes").then(setNotes);
@@ -109,6 +111,9 @@ export function Notes() {
 							<div className="card-header">
 								<div className="card-title">📝 Note #{n.id}</div>
 								{n.expires_at && <span className="badge badge-t1">💣 {daysRemaining(n.expires_at)}d left</span>}
+								<button className="btn btn-sm btn-outline" style={{ marginLeft: "auto", marginRight: 4 }} onClick={() => setShareNote(n)}>
+									📤
+								</button>
 								<button className="card-remove-btn" onClick={() => handleDelete(n.id)}>
 									✕
 								</button>
@@ -117,6 +122,10 @@ export function Notes() {
 						</div>
 					))}
 				</div>
+			)}
+
+			{shareNote && (
+				<ShareModal objectType="note" objectId={shareNote.id} onClose={() => setShareNote(null)} />
 			)}
 
 			{showAdd && (

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api } from "../api";
 import { GroupedReminders, ListItemRow, ListRow, ListSummary, ListWithItems, ReminderRow } from "../types";
 import { Modal } from "../components/Modal";
+import { ShareModal } from "../components/ShareModal";
 
 const IST_OFFSET_MS = 330 * 60 * 1000;
 
@@ -34,6 +35,7 @@ export function Lists({ expandedListId }: Props) {
 	// BUG-03: item reminder modal
 	const [itemReminderModal, setItemReminderModal] = useState<{ item: ListItemRow; list: ListRow } | null>(null);
 	const [itemReminderForm, setItemReminderForm] = useState<ItemReminderForm>({ date: "", time: "" });
+	const [shareListId, setShareListId] = useState<number | null>(null);
 
 	async function loadLists() {
 		const [data, grouped] = await Promise.all([
@@ -174,7 +176,14 @@ export function Lists({ expandedListId }: Props) {
 							>
 								<div className="card-title">📋 {l.name}</div>
 								<span className="badge badge-t3">{l.pending} pending</span>
-								<span style={{ marginLeft: "auto", color: "var(--muted)", fontSize: 12 }}>
+								<button
+									className="btn btn-sm btn-outline"
+									style={{ marginLeft: "auto", marginRight: 4 }}
+									onClick={(e) => { e.stopPropagation(); setShareListId(l.id); }}
+								>
+									📤
+								</button>
+								<span style={{ color: "var(--muted)", fontSize: 12 }}>
 									{isExpanded ? "▲" : "▼"}
 								</span>
 							</div>
@@ -252,6 +261,10 @@ export function Lists({ expandedListId }: Props) {
 						</div>
 					);
 				})
+			)}
+
+			{shareListId !== null && (
+				<ShareModal objectType="list" objectId={shareListId} onClose={() => setShareListId(null)} />
 			)}
 
 			{showCreate && (
