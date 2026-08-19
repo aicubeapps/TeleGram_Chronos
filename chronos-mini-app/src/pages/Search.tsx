@@ -48,16 +48,19 @@ export function Search() {
 			if (!res.ok) throw new Error("Fetch failed");
 			const blob = await res.blob();
 			const url = URL.createObjectURL(blob);
+			const a = document.createElement("a");
+			a.href = url;
+
 			if (doc.file_type === "photo") {
-				window.open(url, "_blank");
+				a.target = "_blank";
+				a.rel = "noopener";
 			} else {
-				const a = document.createElement("a");
-				a.href = url;
 				a.download = doc.label;
-				document.body.appendChild(a);
-				a.click();
-				document.body.removeChild(a);
 			}
+
+			document.body.appendChild(a);
+			a.click();
+			document.body.removeChild(a);
 			setTimeout(() => URL.revokeObjectURL(url), 5000);
 		} finally {
 			setRetrieving(null);
