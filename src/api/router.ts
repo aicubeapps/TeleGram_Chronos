@@ -85,14 +85,14 @@ export async function handleAPI(request: Request, env: Env): Promise<Response> {
 		return new Response(null, { status: 204, headers: corsHeaders() });
 	}
 
+	const url = new URL(request.url);
+	const segments = url.pathname.replace(/^\/api\//, "").split("/").filter(Boolean);
+
 	const auth = await authenticateRequest(request, env);
 	if (!auth) {
 		return errorResponse("Unauthorized", 401);
 	}
 	const chatId = auth.chatId;
-
-	const url = new URL(request.url);
-	const segments = url.pathname.replace(/^\/api\//, "").split("/").filter(Boolean);
 	const method = request.method;
 
 	try {
