@@ -8,10 +8,10 @@ import { calculateNextFire, recurrenceCategoryWord } from "../utils/recurrence";
 export const SNOOZE_OPTIONS: { label: string; minutes: number }[] = [
 	{ label: "15m", minutes: 15 },
 	{ label: "30m", minutes: 30 },
-	{ label: "1hr", minutes: 60 },
-	{ label: "2hr", minutes: 120 },
-	{ label: "4hr", minutes: 240 },
-	{ label: "24hr", minutes: 1440 },
+	{ label: "1h", minutes: 60 },
+	{ label: "2h", minutes: 120 },
+	{ label: "4h", minutes: 240 },
+	{ label: "24h", minutes: 1440 },
 ];
 
 export interface CronResult {

@@ -2,15 +2,19 @@ import { useEffect, useState } from "react";
 import { api } from "../api";
 import { GroupedReminders, ReminderRow } from "../types";
 import { Modal } from "../components/Modal";
+import { ReminderModal } from "../components/ReminderModal";
 
 type Filter = "all" | "today" | "upcoming" | "recurring";
 
-const SNOOZE_OPTIONS = [
-	{ label: "15m", minutes: 15 },
-	{ label: "30m", minutes: 30 },
-	{ label: "1hr", minutes: 60 },
-	{ label: "2hr", minutes: 120 },
-];
+const SNOOZE_LABELS = ["15m", "30m", "1h", "2h", "4h", "24h"] as const;
+const SNOOZE_MINUTES: Record<string, number> = {
+	"15m": 15,
+	"30m": 30,
+	"1h": 60,
+	"2h": 120,
+	"4h": 240,
+	"24h": 1440,
+};
 
 const RECURRENCE_OPTIONS = [
 	{ value: "DAILY", label: "Every Day" },
@@ -43,10 +47,6 @@ function istDateTimeParts(utcDatetime: string): { date: string; time: string } {
 	return { date, time };
 }
 
-// Interprets editForm.date/time as IST wall-clock and returns the true UTC instant,
-// independent of the browser's own local timezone (Date.UTC always treats its args as
-// UTC components, so this can't double-apply an offset the way `new Date(isoLikeStr)`
-// would if the device's local zone happened to already be IST).
 function istInputToUtcIso(date: string, time: string): string {
 	const [y, m, d] = date.split("-").map(Number);
 	const [hh, mm] = time.split(":").map(Number);
@@ -75,19 +75,32 @@ export function Reminders() {
 	const [saving, setSaving] = useState(false);
 	const [pastTimeWarning, setPastTimeWarning] = useState(false);
 
+	// BUG-02: inline delete confirmation
+	const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null);
+
+	// Shared ReminderModal (for edit from row)
+	const [modalReminder, setModalReminder] = useState<ReminderRow | null>(null);
+
 	function load() {
 		api.get<GroupedReminders>("/reminders").then(setGrouped);
 	}
 
 	useEffect(load, []);
 
-	async function handleSnooze(id: number, minutes: number) {
+	async function handleSnooze(id: number, label: string) {
+		const minutes = SNOOZE_MINUTES[label];
 		await api.patch(`/reminders/${id}/snooze`, { minutes });
 		load();
 	}
 
 	async function handleComplete(id: number) {
 		await api.patch(`/reminders/${id}/complete`);
+		load();
+	}
+
+	async function handleDeleteReminder(id: number) {
+		await api.del(`/reminders/${id}`);
+		setConfirmDeleteId(null);
 		load();
 	}
 
@@ -172,37 +185,66 @@ export function Reminders() {
 			{rows.length === 0 ? (
 				<p className="text-muted">No reminders in this view.</p>
 			) : (
-				<div className="table-wrap">
-					<table className="alert-table">
-						<tbody>
-							{rows.map(({ row, overdue }) => (
-								<tr key={row.id} style={overdue ? { borderLeft: "3px solid #ef4444" } : undefined}>
-									<td className="asset-cell">{row.message}</td>
-									<td className="ts-cell">
-										{row.recurrence_rule ? row.recurrence_rule : istLabel(row.snoozed_until ?? row.remind_on)}
-									</td>
-									<td>
-										<div style={{ display: "flex", gap: 4, flexWrap: "wrap", alignItems: "center" }}>
-											{SNOOZE_OPTIONS.map((opt) => (
-												<button key={opt.minutes} className="btn btn-sm btn-outline" onClick={() => handleSnooze(row.id, opt.minutes)}>
-													💤 {opt.label}
-												</button>
-											))}
-											<button className="btn btn-sm btn-success" onClick={() => handleComplete(row.id)}>
-												✅ Done
-											</button>
-											{row.completed !== 1 && (
-												<button className="icon-btn" title="Edit" onClick={() => openEditModal(row)}>
-													✏️
-												</button>
-											)}
-										</div>
-									</td>
-								</tr>
+				rows.map(({ row, overdue }) => (
+					<div
+						key={row.id}
+						className="card"
+						style={{ position: "relative", borderLeft: overdue ? "3px solid #ef4444" : undefined }}
+					>
+						{/* BUG-02: ✕ delete button, hidden for completed */}
+						{row.completed !== 1 && (
+							<button
+								className="card-remove-btn"
+								onClick={() => setConfirmDeleteId(confirmDeleteId === row.id ? null : row.id)}
+								title="Delete reminder"
+							>
+								✕
+							</button>
+						)}
+
+						<div style={{ paddingRight: 24 }}>
+							<div style={{ fontWeight: 700, marginBottom: 4 }}>{row.message}</div>
+							<div className="text-muted" style={{ fontSize: 11, marginBottom: 8 }}>
+								{row.recurrence_rule ? row.recurrence_rule : istLabel(row.snoozed_until ?? row.remind_on)}
+							</div>
+						</div>
+
+						{/* BUG-02: inline delete confirmation */}
+						{confirmDeleteId === row.id && (
+							<div className="banner banner-warning mb-md" style={{ flexDirection: "column", gap: 8, alignItems: "flex-start" }}>
+								<span>Delete this reminder?</span>
+								<div style={{ display: "flex", gap: 8 }}>
+									<button className="btn btn-danger btn-sm" onClick={() => handleDeleteReminder(row.id)}>
+										Yes, delete
+									</button>
+									<button className="btn btn-outline btn-sm" onClick={() => setConfirmDeleteId(null)}>
+										Cancel
+									</button>
+								</div>
+							</div>
+						)}
+
+						{/* BUG-01: snooze grid 3×2 */}
+						<div className="snooze-grid">
+							{SNOOZE_LABELS.map((label) => (
+								<button key={label} className="btn btn-sm btn-outline" onClick={() => handleSnooze(row.id, label)}>
+									💤 {label}
+								</button>
 							))}
-						</tbody>
-					</table>
-				</div>
+						</div>
+
+						<div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+							<button className="btn btn-sm btn-success" onClick={() => handleComplete(row.id)}>
+								✅ Done
+							</button>
+							{row.completed !== 1 && (
+								<button className="icon-btn" title="Edit" onClick={() => setModalReminder(row)}>
+									✏️
+								</button>
+							)}
+						</div>
+					</div>
+				))
 			)}
 
 			{showAdd && (
@@ -281,6 +323,16 @@ export function Reminders() {
 						</button>
 					</div>
 				</Modal>
+			)}
+
+			{/* Shared ReminderModal for BUG-09/BUG-10 usage */}
+			{modalReminder && (
+				<ReminderModal
+					reminder={modalReminder}
+					onClose={() => setModalReminder(null)}
+					onUpdate={() => { setModalReminder(null); load(); }}
+					onDelete={() => { setModalReminder(null); load(); }}
+				/>
 			)}
 		</>
 	);

@@ -66,6 +66,7 @@ export interface DocumentRow {
 	r2_key: string;
 	label: string;
 	file_type: string;
+	file_size: number;
 	created_at: string;
 }
 
@@ -78,7 +79,23 @@ export interface BookmarkRow {
 }
 
 export interface SearchResults {
+	reminders: ReminderRow[];
 	notes: NoteRow[];
 	documents: DocumentRow[];
 	bookmarks: BookmarkRow[];
+}
+
+export interface VaultTypeStats {
+	bytes: number;
+	count: number;
+}
+
+export interface VaultStats {
+	total_bytes: number;
+	free_tier_bytes: number;
+	by_type: {
+		document: VaultTypeStats;
+		photo: VaultTypeStats;
+		unknown: VaultTypeStats;
+	};
 }

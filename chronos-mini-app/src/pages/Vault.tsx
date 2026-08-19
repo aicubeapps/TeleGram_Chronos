@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { api, API_BASE } from "../api";
-import { DocumentRow } from "../types";
+import { DocumentRow, VaultStats } from "../types";
 import { Modal } from "../components/Modal";
 import { getWebApp } from "../telegram";
 
@@ -8,17 +8,29 @@ function badgeClass(fileType: string): string {
 	return fileType === "photo" ? "badge-nse" : "badge-t1";
 }
 
+function formatBytes(bytes: number): string {
+	if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+	if (bytes < 1024 ** 3) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+	return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`;
+}
+
+const FREE_TIER = 10 * 1024 ** 3;
+
 export function Vault() {
 	const [docs, setDocs] = useState<DocumentRow[] | null>(null);
+	const [stats, setStats] = useState<VaultStats | null>(null);
 	const [label, setLabel] = useState("");
 	const [file, setFile] = useState<File | null>(null);
 	const [uploading, setUploading] = useState(false);
 	const [progress, setProgress] = useState(0);
 	const [deleteTarget, setDeleteTarget] = useState<DocumentRow | null>(null);
+	const [retrieving, setRetrieving] = useState<number | null>(null);
+	const [retrieveError, setRetrieveError] = useState<number | null>(null);
 	const fileInputRef = useRef<HTMLInputElement>(null);
 
 	function load() {
 		api.get<DocumentRow[]>("/documents").then(setDocs);
+		api.get<VaultStats>("/vault/stats").then(setStats).catch(() => setStats(null));
 	}
 
 	useEffect(load, []);
@@ -44,17 +56,37 @@ export function Vault() {
 		}
 	}
 
+	// BUG-08: fixed retrieve with loading, error, open vs download
 	async function handleRetrieve(doc: DocumentRow) {
-		const initData = getWebApp()?.initData ?? "";
-		const res = await fetch(`${API_BASE}/api/documents/${doc.id}`, { headers: { Authorization: initData } });
-		if (!res.ok) return;
-		const blob = await res.blob();
-		const url = URL.createObjectURL(blob);
-		const a = document.createElement("a");
-		a.href = url;
-		a.download = doc.label;
-		a.click();
-		URL.revokeObjectURL(url);
+		setRetrieving(doc.id);
+		setRetrieveError(null);
+		try {
+			const initData = getWebApp()?.initData ?? "";
+			const res = await fetch(`${API_BASE}/api/documents/${doc.id}`, {
+				headers: { Authorization: initData },
+			});
+			if (!res.ok) throw new Error("Fetch failed");
+
+			const blob = await res.blob();
+			const url = URL.createObjectURL(blob);
+
+			if (doc.file_type === "photo") {
+				window.open(url, "_blank");
+			} else {
+				const a = document.createElement("a");
+				a.href = url;
+				a.download = doc.label;
+				document.body.appendChild(a);
+				a.click();
+				document.body.removeChild(a);
+			}
+
+			setTimeout(() => URL.revokeObjectURL(url), 5000);
+		} catch {
+			setRetrieveError(doc.id);
+		} finally {
+			setRetrieving(null);
+		}
 	}
 
 	async function handleDelete() {
@@ -64,9 +96,47 @@ export function Vault() {
 		load();
 	}
 
+	const pct = stats ? (stats.total_bytes / FREE_TIER) * 100 : 0;
+	const colorClass = pct < 70 ? "ok" : pct < 90 ? "warning" : "danger";
+
 	return (
 		<>
 			<div className="page-title">Vault</div>
+
+			{/* BUG-07: storage usage widget */}
+			{stats && (
+				<div className="card mb-md">
+					<div className="card-header">
+						<span className="card-title">STORAGE</span>
+						<span className="text-muted">{formatBytes(stats.total_bytes)} of 10 GB used</span>
+					</div>
+					<div className="progress-bar-wrap">
+						<div className="progress-bar-bg">
+							<div className={`progress-bar-fill ${colorClass}`} style={{ width: `${Math.min(pct, 100)}%` }} />
+						</div>
+					</div>
+					<div className="settings-row">
+						<span className="settings-label">📄 Documents</span>
+						<span className="settings-value">
+							{formatBytes(stats.by_type.document.bytes)} ({stats.by_type.document.count} files)
+						</span>
+					</div>
+					<div className="settings-row">
+						<span className="settings-label">🖼️ Photos</span>
+						<span className="settings-value">
+							{formatBytes(stats.by_type.photo.bytes)} ({stats.by_type.photo.count} files)
+						</span>
+					</div>
+					{stats.by_type.unknown.count > 0 && (
+						<div className="settings-row">
+							<span className="settings-label">❓ Unknown</span>
+							<span className="settings-value">
+								{formatBytes(stats.by_type.unknown.bytes)} ({stats.by_type.unknown.count} files)
+							</span>
+						</div>
+					)}
+				</div>
+			)}
 
 			<div className="card">
 				<div className="card-header">
@@ -97,9 +167,12 @@ export function Vault() {
 							<div className="card-title">{d.label}</div>
 							<span className={`badge ${badgeClass(d.file_type)}`}>{d.file_type}</span>
 						</div>
+						{retrieveError === d.id && (
+							<div className="banner banner-error mb-md">❌ Failed to retrieve file. Try again.</div>
+						)}
 						<div style={{ display: "flex", gap: 8 }}>
-							<button className="btn btn-sm btn-outline" onClick={() => handleRetrieve(d)}>
-								Retrieve
+							<button className="btn btn-sm btn-outline" onClick={() => handleRetrieve(d)} disabled={retrieving === d.id}>
+								{retrieving === d.id ? <span className="spinner" /> : "⬇️ Retrieve"}
 							</button>
 							<button className="btn btn-sm btn-danger" onClick={() => setDeleteTarget(d)}>
 								Delete

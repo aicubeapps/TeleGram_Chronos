@@ -1222,12 +1222,36 @@ html, body, #root {
 
 .download-btn:hover { background: var(--nav-hover); }
 
+/* ── Hoverable cards ── */
+.card-hoverable {
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.card-hoverable:hover {
+  background: var(--warm);
+}
+
+.card-hoverable:active {
+  opacity: 0.8;
+}
+
+/* ── Snooze grid (3×2) ── */
+.snooze-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--sp-sm);
+  margin-top: var(--sp-sm);
+}
+
 /* ── Utility ── */
 .mt-xs { margin-top: var(--sp-xs); }
 .mt-sm { margin-top: var(--sp-sm); }
 .mt-md { margin-top: var(--sp-md); }
 .mb-sm { margin-bottom: var(--sp-sm); }
 .mb-md { margin-bottom: var(--sp-md); }
+.mb-lg { margin-bottom: var(--sp-lg); }
+.ml-sm { margin-left: var(--sp-sm); }
 .text-mono {
   font-family: var(--font-mono);
   font-size: 11px;
