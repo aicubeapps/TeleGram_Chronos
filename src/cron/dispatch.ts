@@ -1,4 +1,7 @@
-import { getDueReminders, markSent, getRecurringDue, updateNextFire } from "../db/reminders";
+import { getDueReminders, markSent, getRecurringDue, updateNextFire, getDueListReminders } from "../db/reminders";
+import { deleteExpiredNotes } from "../db/notes";
+import { getListItems } from "../db/lists";
+import { chunkButtons } from "../commands/lists";
 import { sendMessage, InlineKeyboardButton } from "../telegram";
 import { calculateNextFire, recurrenceCategoryWord } from "../utils/recurrence";
 
@@ -16,6 +19,9 @@ export interface CronResult {
 	failed: number;
 	recurringDispatched: number;
 	recurringFailed: number;
+	listDispatched: number;
+	listFailed: number;
+	expiredNotesDeleted: number;
 }
 
 async function dispatchOneTime(env: Env): Promise<{ dispatched: number; failed: number }> {
@@ -97,14 +103,94 @@ async function dispatchRecurring(env: Env): Promise<{ dispatched: number; failed
 	return { dispatched, failed };
 }
 
+async function dispatchListReminders(env: Env): Promise<{ dispatched: number; failed: number }> {
+	let dispatched = 0;
+	let failed = 0;
+
+	let due;
+	try {
+		due = await getDueListReminders(env.DB);
+	} catch (err) {
+		console.error("Cron: getDueListReminders failed:", err);
+		return { dispatched, failed };
+	}
+
+	for (const reminder of due) {
+		try {
+			const listId = reminder.linked_list_id as number;
+			const listName = reminder.list_name ?? "List";
+			const snoozeRow = SNOOZE_OPTIONS.map((opt) => ({ text: opt.label, callback_data: `snooze:${reminder.id}:${opt.minutes}` }));
+			let ok: boolean;
+
+			if (reminder.linked_item_id === null) {
+				const items = await getListItems(env.DB, listId);
+				const pending = items.filter((i) => i.completed === 0);
+
+				const lines = [`🔔 Reminder: ${listName} List`, `${pending.length} items pending:`];
+				for (const item of pending) lines.push(`• ${item.item}`);
+
+				const itemButtons: InlineKeyboardButton[] = pending.map((item) => ({
+					text: `✅ ${item.item}`,
+					callback_data: `item_done:${item.id}:${listId}`,
+				}));
+
+				const keyboard: InlineKeyboardButton[][] = [
+					...chunkButtons(itemButtons, 3),
+					snoozeRow,
+					[{ text: "📋 Show Full List", callback_data: `show_list:${listId}` }],
+				];
+
+				ok = await sendMessage(env.TELEGRAM_BOT_TOKEN, reminder.chat_id, lines.join("\n"), keyboard);
+			} else {
+				const itemText = reminder.item_text ?? "";
+				const keyboard: InlineKeyboardButton[][] = [
+					[
+						{ text: "✅ Done", callback_data: `item_done:${reminder.linked_item_id}:${listId}` },
+						{ text: "📋 Show Full List", callback_data: `show_list:${listId}` },
+					],
+					snoozeRow,
+				];
+
+				ok = await sendMessage(env.TELEGRAM_BOT_TOKEN, reminder.chat_id, `🔔 ${listName} List — ${itemText}`, keyboard);
+			}
+
+			if (ok) {
+				await markSent(env.DB, reminder.id);
+				dispatched++;
+			} else {
+				failed++;
+			}
+		} catch (err) {
+			console.error(`Cron: failed to dispatch list reminder #${reminder.id}:`, err);
+			failed++;
+		}
+	}
+
+	return { dispatched, failed };
+}
+
+async function cleanupExpiredNotes(env: Env): Promise<number> {
+	try {
+		return await deleteExpiredNotes(env.DB);
+	} catch (err) {
+		console.error("Cron: deleteExpiredNotes failed:", err);
+		return 0;
+	}
+}
+
 export async function dispatchCron(env: Env): Promise<CronResult> {
 	const oneTime = await dispatchOneTime(env);
 	const recurring = await dispatchRecurring(env);
+	const listReminders = await dispatchListReminders(env);
+	const expiredNotesDeleted = await cleanupExpiredNotes(env);
 
 	return {
 		dispatched: oneTime.dispatched,
 		failed: oneTime.failed,
 		recurringDispatched: recurring.dispatched,
 		recurringFailed: recurring.failed,
+		listDispatched: listReminders.dispatched,
+		listFailed: listReminders.failed,
+		expiredNotesDeleted,
 	};
 }

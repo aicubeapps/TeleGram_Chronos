@@ -1,7 +1,9 @@
-import { insertReminder, insertRecurring, listPending, deleteReminder, getReminder } from "../db/reminders";
+import { insertReminder, insertRecurring, listPending, deleteReminder, getReminder, insertListReminder } from "../db/reminders";
+import { getListItems, ListRow } from "../db/lists";
 import { sendMessage } from "../telegram";
-import { parseReminderDateTime, formatIST } from "../utils/datetime";
-import { parseRecurringCommand, firstFireAfter, recurrencePhraseShort, formatRecurrenceListLine } from "../utils/recurrence";
+import { parseReminderDateTime, parseTimeHHMM, formatIST } from "../utils/datetime";
+import { formatISTDisplay } from "../utils/time";
+import { parseRecurringCommand, firstFireAfter, recurrencePhraseShort, formatRecurrenceListLine, WEEKDAYS } from "../utils/recurrence";
 
 export const HELP_TEXT = [
 	"Available commands:",
@@ -56,11 +58,10 @@ export async function handleRemind(env: Env, chatId: number, text: string): Prom
 			const nextFire = firstFireAfter(recurring.rule, recurring.hour, recurring.minute);
 			const id = await insertRecurring(env.DB, String(chatId), recurring.message, recurring.rule, nextFire);
 			const phrase = recurrencePhraseShort(recurring.rule);
-			const { dateLabel, timeLabel } = formatIST(nextFire);
 			await sendMessage(
 				env.TELEGRAM_BOT_TOKEN,
 				chatId,
-				`✅ Recurring reminder #${id} set: ${phrase}\nNext: ${dateLabel} ${timeLabel} IST\n"${recurring.message}"`,
+				`✅ Recurring reminder #${id} set: ${phrase}\nNext: ${formatISTDisplay(nextFire)} IST\n"${recurring.message}"`,
 			);
 		} catch (err) {
 			console.error("handleRemind: insertRecurring failed:", err);
@@ -85,8 +86,7 @@ export async function handleRemind(env: Env, chatId: number, text: string): Prom
 
 	try {
 		const id = await insertReminder(env.DB, String(chatId), message, remindOn);
-		const { dateLabel, timeLabel } = formatIST(remindOn);
-		await sendMessage(env.TELEGRAM_BOT_TOKEN, chatId, `✅ Reminder #${id} set for ${dateLabel} ${timeLabel} IST\n"${message}"`);
+		await sendMessage(env.TELEGRAM_BOT_TOKEN, chatId, `✅ Reminder #${id} set for ${formatISTDisplay(remindOn)} IST\n"${message}"`);
 	} catch (err) {
 		console.error("handleRemind: insertReminder failed:", err);
 		await sendMessage(env.TELEGRAM_BOT_TOKEN, chatId, GENERIC_ERROR);
@@ -112,8 +112,7 @@ export async function handleList(env: Env, chatId: number): Promise<void> {
 		if (grouped.overdue.length > 0) {
 			lines.push("⚠️ Overdue (snoozed or missed):");
 			for (const r of grouped.overdue) {
-				const { dateLabel, timeLabel } = formatIST(r.snoozed_until ?? r.remind_on);
-				lines.push(`- #${r.id} ${r.message} — was ${dateLabel} ${timeLabel}`);
+				lines.push(`- #${r.id} ${r.message} — was ${formatISTDisplay(r.snoozed_until ?? r.remind_on)}`);
 			}
 			lines.push("");
 		}
@@ -130,8 +129,7 @@ export async function handleList(env: Env, chatId: number): Promise<void> {
 		if (grouped.upcoming.length > 0) {
 			lines.push("🗓 Upcoming:");
 			for (const r of grouped.upcoming) {
-				const { dateLabel, timeLabel } = formatIST(r.snoozed_until ?? r.remind_on);
-				lines.push(`- #${r.id} ${r.message} — ${dateLabel} ${timeLabel}`);
+				lines.push(`- #${r.id} ${r.message} — ${formatISTDisplay(r.snoozed_until ?? r.remind_on)}`);
 			}
 			lines.push("");
 		}
@@ -186,6 +184,63 @@ export async function handleDelete(env: Env, chatId: number, text: string): Prom
 		}
 	} catch (err) {
 		console.error("handleDelete: failed:", err);
+		await sendMessage(env.TELEGRAM_BOT_TOKEN, chatId, GENERIC_ERROR);
+	}
+}
+
+// Accepts "tomorrow", a weekday name ("friday"), or any format parseReminderDateTime
+// already supports (+N, YYYY-MM-DD, DD-MMM-YYYY). Weekday names resolve to the next
+// on-or-after occurrence via the same math used for weekly recurring reminders.
+function parseListReminderDateTime(dateStr: string, timeStr: string, now: Date = new Date()): string | null {
+	const time = parseTimeHHMM(timeStr);
+	if (!time) return null;
+
+	const lower = dateStr.toLowerCase();
+	if (lower === "tomorrow") {
+		return parseReminderDateTime("+1", timeStr, now);
+	}
+	if (WEEKDAYS.includes(lower)) {
+		return firstFireAfter(`WEEKLY:${lower}`, time.hour, time.minute, now);
+	}
+	return parseReminderDateTime(dateStr, timeStr, now);
+}
+
+const LIST_REMIND_USAGE =
+	"Usage: /list remind <name> [item#] <date> <time>\nExample: /list remind Shopping tomorrow 10:00\nExample: /list remind Shopping 1 friday 18:00";
+
+export async function attachListReminder(
+	env: Env,
+	chatId: number,
+	list: ListRow,
+	itemNum: number | null,
+	dateStr: string,
+	timeStr: string,
+): Promise<void> {
+	const remindOn = parseListReminderDateTime(dateStr, timeStr);
+	if (!remindOn) {
+		await sendMessage(env.TELEGRAM_BOT_TOKEN, chatId, LIST_REMIND_USAGE);
+		return;
+	}
+
+	try {
+		let message = `${list.name} List`;
+		let linkedItemId: number | null = null;
+
+		if (itemNum !== null) {
+			const items = await getListItems(env.DB, list.id);
+			const item = items[itemNum - 1];
+			if (!item) {
+				await sendMessage(env.TELEGRAM_BOT_TOKEN, chatId, `Item #${itemNum} not found in ${list.name}.`);
+				return;
+			}
+			message = `${list.name} — ${item.item}`;
+			linkedItemId = item.id;
+		}
+
+		const id = await insertListReminder(env.DB, String(chatId), message, remindOn, list.id, linkedItemId);
+		await sendMessage(env.TELEGRAM_BOT_TOKEN, chatId, `✅ Reminder #${id} set for ${formatISTDisplay(remindOn)} IST\n"${message}"`);
+	} catch (err) {
+		console.error("attachListReminder: failed:", err);
 		await sendMessage(env.TELEGRAM_BOT_TOKEN, chatId, GENERIC_ERROR);
 	}
 }

@@ -1,0 +1,2 @@
+name = "chronos-mini-app"
+pages_build_output_dir = "dist"

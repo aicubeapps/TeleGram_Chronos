@@ -1,4 +1,13 @@
 import { markSnoozed, markComplete, getReminder, updateNextFire, deleteReminder } from "../db/reminders";
+import { deleteDocumentById } from "./documents";
+import {
+	handleItemDone,
+	handleShowListById,
+	handleKeepList,
+	handleArchiveListCallback,
+	handleDeleteListConfirmed,
+	handleCancelDeleteList,
+} from "./lists";
 import { answerCallbackQuery, editMessageText } from "../telegram";
 import { toD1Utc } from "../utils/datetime";
 import { SNOOZE_OPTIONS } from "../cron/dispatch";
@@ -101,6 +110,69 @@ export async function handleCallbackQuery(env: Env, callbackQuery: TelegramCallb
 		} else if (data.startsWith("delete_cancel:")) {
 			await answerCallbackQuery(env.TELEGRAM_BOT_TOKEN, callbackQuery.id, "Cancelled");
 			await editMessageText(env.TELEGRAM_BOT_TOKEN, chatId, messageId, `${original}\n\nCancelled — reminder kept.`);
+		} else if (data.startsWith("delete_doc_confirm:")) {
+			const id = parseIdSuffix(data, "delete_doc_confirm:");
+			if (id === null) {
+				await answerCallbackQuery(env.TELEGRAM_BOT_TOKEN, callbackQuery.id, "Invalid action");
+				return;
+			}
+
+			const label = await deleteDocumentById(env, id, String(chatId));
+			await answerCallbackQuery(env.TELEGRAM_BOT_TOKEN, callbackQuery.id, label ? "Deleted" : "Not found");
+			await editMessageText(
+				env.TELEGRAM_BOT_TOKEN,
+				chatId,
+				messageId,
+				label ? `🗑️ Deleted: ${label}` : `Document #${id} not found.`,
+			);
+		} else if (data.startsWith("delete_doc_cancel:")) {
+			await answerCallbackQuery(env.TELEGRAM_BOT_TOKEN, callbackQuery.id, "Cancelled");
+			await editMessageText(env.TELEGRAM_BOT_TOKEN, chatId, messageId, `${original}\n\nCancelled — document kept.`);
+		} else if (data.startsWith("item_done:")) {
+			const [, itemIdStr, listIdStr] = data.split(":");
+			const itemId = parseInt(itemIdStr, 10);
+			const listId = parseInt(listIdStr, 10);
+
+			if (Number.isNaN(itemId) || Number.isNaN(listId)) {
+				await answerCallbackQuery(env.TELEGRAM_BOT_TOKEN, callbackQuery.id, "Invalid action");
+				return;
+			}
+
+			await handleItemDone(env, itemId, listId, chatId, messageId);
+			await answerCallbackQuery(env.TELEGRAM_BOT_TOKEN, callbackQuery.id, "Marked done");
+		} else if (data.startsWith("show_list:")) {
+			const listId = parseIdSuffix(data, "show_list:");
+			if (listId === null) {
+				await answerCallbackQuery(env.TELEGRAM_BOT_TOKEN, callbackQuery.id, "Invalid action");
+				return;
+			}
+
+			await answerCallbackQuery(env.TELEGRAM_BOT_TOKEN, callbackQuery.id);
+			await handleShowListById(env, chatId, listId);
+		} else if (data.startsWith("keep_list:")) {
+			await answerCallbackQuery(env.TELEGRAM_BOT_TOKEN, callbackQuery.id, "Kept");
+			await handleKeepList(env, chatId, messageId, original);
+		} else if (data.startsWith("archive_list:")) {
+			const listId = parseIdSuffix(data, "archive_list:");
+			if (listId === null) {
+				await answerCallbackQuery(env.TELEGRAM_BOT_TOKEN, callbackQuery.id, "Invalid action");
+				return;
+			}
+
+			await handleArchiveListCallback(env, chatId, listId, messageId);
+			await answerCallbackQuery(env.TELEGRAM_BOT_TOKEN, callbackQuery.id, "Archived");
+		} else if (data.startsWith("confirm_delete_list:")) {
+			const listId = parseIdSuffix(data, "confirm_delete_list:");
+			if (listId === null) {
+				await answerCallbackQuery(env.TELEGRAM_BOT_TOKEN, callbackQuery.id, "Invalid action");
+				return;
+			}
+
+			await handleDeleteListConfirmed(env, chatId, listId, messageId);
+			await answerCallbackQuery(env.TELEGRAM_BOT_TOKEN, callbackQuery.id, "Deleted");
+		} else if (data.startsWith("cancel_delete_list:")) {
+			await answerCallbackQuery(env.TELEGRAM_BOT_TOKEN, callbackQuery.id, "Cancelled");
+			await handleCancelDeleteList(env, chatId, messageId);
 		} else {
 			await answerCallbackQuery(env.TELEGRAM_BOT_TOKEN, callbackQuery.id);
 		}

@@ -110,6 +110,42 @@ export async function updateNextFire(db: D1Database, id: number, nextFire: strin
 	await db.prepare(`UPDATE reminders SET next_fire = ? WHERE id = ?`).bind(nextFire, id).run();
 }
 
+export interface ReminderPatch {
+	message?: string;
+	remindOn?: string;
+	recurrenceRule?: string;
+	nextFire?: string;
+}
+
+// Only fields present in `patch` are written — omitted fields keep their current value
+// (COALESCE), and remindOn being present also clears snoozed_until and resets sent to 0
+// (an edited fire time supersedes any prior snooze/dispatch state).
+export async function updateReminder(db: D1Database, id: number, chatId: string, patch: ReminderPatch): Promise<void> {
+	await db
+		.prepare(
+			`UPDATE reminders
+			 SET
+			   message = COALESCE(?, message),
+			   remind_on = COALESCE(?, remind_on),
+			   recurrence_rule = COALESCE(?, recurrence_rule),
+			   next_fire = COALESCE(?, next_fire),
+			   snoozed_until = CASE WHEN ? IS NOT NULL THEN NULL ELSE snoozed_until END,
+			   sent = CASE WHEN ? IS NOT NULL THEN 0 ELSE sent END
+			 WHERE id = ? AND chat_id = ?`,
+		)
+		.bind(
+			patch.message ?? null,
+			patch.remindOn ?? null,
+			patch.recurrenceRule ?? null,
+			patch.nextFire ?? null,
+			patch.remindOn ?? null,
+			patch.remindOn ?? null,
+			id,
+			chatId,
+		)
+		.run();
+}
+
 export async function getDueReminders(db: D1Database): Promise<ReminderRow[]> {
 	const { results } = await db
 		.prepare(
@@ -118,10 +154,50 @@ export async function getDueReminders(db: D1Database): Promise<ReminderRow[]> {
 			 AND recurrence_rule IS NULL
 			 AND remind_on <= datetime('now')
 			 AND (snoozed_until IS NULL OR snoozed_until <= datetime('now'))
-			 AND sent = 0`,
+			 AND sent = 0
+			 AND linked_list_id IS NULL`,
 		)
 		.all<ReminderRow>();
 	return results ?? [];
+}
+
+export interface ListReminderRow extends ReminderRow {
+	list_name: string | null;
+	item_text: string | null;
+}
+
+export async function getDueListReminders(db: D1Database): Promise<ListReminderRow[]> {
+	const { results } = await db
+		.prepare(
+			`SELECT r.*, l.name as list_name, li.item as item_text
+			 FROM reminders r
+			 LEFT JOIN lists l ON r.linked_list_id = l.id
+			 LEFT JOIN list_items li ON r.linked_item_id = li.id
+			 WHERE r.completed = 0
+			 AND r.remind_on <= datetime('now')
+			 AND (r.snoozed_until IS NULL OR r.snoozed_until <= datetime('now'))
+			 AND r.sent = 0
+			 AND r.linked_list_id IS NOT NULL`,
+		)
+		.all<ListReminderRow>();
+	return results ?? [];
+}
+
+export async function insertListReminder(
+	db: D1Database,
+	chatId: string,
+	message: string,
+	remindOn: string,
+	linkedListId: number,
+	linkedItemId: number | null,
+): Promise<number> {
+	const result = await db
+		.prepare(
+			`INSERT INTO reminders (chat_id, message, remind_on, linked_list_id, linked_item_id) VALUES (?, ?, ?, ?, ?)`,
+		)
+		.bind(chatId, message, remindOn, linkedListId, linkedItemId)
+		.run();
+	return result.meta.last_row_id as number;
 }
 
 export async function getRecurringDue(db: D1Database): Promise<ReminderRow[]> {
